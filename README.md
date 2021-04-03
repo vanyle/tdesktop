@@ -27,4 +27,4 @@ Structure of the folders when building:
 You'll need to move the `bat` files one folder up for them to work.
 Run `build.bat` then `build2.bat`
 
-The detailed instructions are found here: [docs/building-msvc](docs/building-msvc)
+The detailed instructions are found here: [docs/building-msvc](docs/building-msvc.md)
