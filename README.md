@@ -12,6 +12,10 @@ Now, by default:
 
 Those defaults are nicer when doing polls with friends :)
 
+## Title changes
+
+Changed the default title of the window so that you can brag to your friends that you're not a normie that uses the official app.
+
 ## Building
 
 
@@ -26,5 +30,6 @@ Structure of the folders when building:
 
 You'll need to move the `bat` files one folder up for them to work.
 Run `build.bat` then `build2.bat`
+You'll just need to change the location of msys2 in `build.bat` to `%cd%/ThirdParty/msys64` at line 105 and 114.
 
 The detailed instructions are found here: [docs/building-msvc](docs/building-msvc.md)
