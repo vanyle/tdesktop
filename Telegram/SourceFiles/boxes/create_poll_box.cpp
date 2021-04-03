@@ -937,7 +937,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			object_ptr<Ui::Checkbox>(
 				container,
 				tr::lng_polls_create_anonymous(tr::now),
-				!(_chosen & PollData::Flag::PublicVotes),
+				(_chosen & PollData::Flag::PublicVotes),
 				st::defaultCheckbox),
 			st::createPollCheckboxMargin)
 		: nullptr;
@@ -948,7 +948,7 @@ object_ptr<Ui::RpWidget> CreatePollBox::setupContent() {
 			object_ptr<Ui::Checkbox>(
 				container,
 				tr::lng_polls_create_multiple_choice(tr::now),
-				(_chosen & PollData::Flag::MultiChoice),
+				!(_chosen & PollData::Flag::MultiChoice),
 				st::defaultCheckbox),
 			st::createPollCheckboxMargin)
 		: nullptr;
