@@ -98,10 +98,6 @@ void UiIntegration::unregisterLeaveSubscription(not_null<QWidget*> widget) {
 	Core::App().unregisterLeaveSubscription(widget);
 }
 
-void UiIntegration::writeLogEntry(const QString &entry) {
-	Logs::writeMain(entry);
-}
-
 QString UiIntegration::emojiCacheFolder() {
 	return cWorkingDir() + "tdata/emoji";
 }
@@ -114,12 +110,6 @@ void UiIntegration::textActionsUpdated() {
 
 void UiIntegration::activationFromTopPanel() {
 	Platform::IgnoreApplicationActivationRightNow();
-}
-
-void UiIntegration::startFontsBegin() {
-}
-
-void UiIntegration::startFontsEnd() {
 }
 
 QString UiIntegration::timeFormat() {
@@ -232,7 +222,7 @@ rpl::producer<> UiIntegration::forcePopupMenuHideRequests() {
 QString UiIntegration::convertTagToMimeTag(const QString &tagId) {
 	if (TextUtilities::IsMentionLink(tagId)) {
 		if (const auto session = Core::App().activeAccount().maybeSession()) {
-			return tagId + ':' + QString::number(session->userId());
+			return tagId + ':' + QString::number(session->userId().bare);
 		}
 	}
 	return tagId;
