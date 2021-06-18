@@ -38,9 +38,14 @@ public:
 
 	QString emojiCacheFolder() override;
 
+	void openglCheckStart() override;
+	void openglCheckFinish() override;
+	bool openglLastCheckFailed() override;
+
 	void textActionsUpdated() override;
 	void activationFromTopPanel() override;
 
+	bool screenIsLocked() override;
 	QString timeFormat() override;
 
 	std::shared_ptr<ClickHandler> createLinkHandler(
@@ -69,5 +74,7 @@ public:
 	QString phraseFormattingMonospace() override;
 
 };
+
+[[nodiscard]] bool OpenGLLastCheckFailed();
 
 } // namespace Core

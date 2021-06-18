@@ -84,6 +84,10 @@ const auto kBadPrefix = u"http://"_q;
 	return true;
 }
 
+[[nodiscard]] QString OpenGLCheckFilePath() {
+	return cWorkingDir() + "tdata/opengl_crash_check";
+}
+
 } // namespace
 
 void UiIntegration::postponeCall(FnMut<void()> &&callable) {
@@ -102,6 +106,22 @@ QString UiIntegration::emojiCacheFolder() {
 	return cWorkingDir() + "tdata/emoji";
 }
 
+void UiIntegration::openglCheckStart() {
+	auto f = QFile(OpenGLCheckFilePath());
+	if (f.open(QIODevice::WriteOnly)) {
+		f.write("1", 1);
+		f.close();
+	}
+}
+
+void UiIntegration::openglCheckFinish() {
+	QFile::remove(OpenGLCheckFilePath());
+}
+
+bool UiIntegration::openglLastCheckFailed() {
+	return OpenGLLastCheckFailed();
+}
+
 void UiIntegration::textActionsUpdated() {
 	if (const auto window = App::wnd()) {
 		window->updateGlobalMenu();
@@ -110,6 +130,10 @@ void UiIntegration::textActionsUpdated() {
 
 void UiIntegration::activationFromTopPanel() {
 	Platform::IgnoreApplicationActivationRightNow();
+}
+
+bool UiIntegration::screenIsLocked() {
+	return Core::App().screenIsLocked();
 }
 
 QString UiIntegration::timeFormat() {
@@ -234,11 +258,12 @@ const Ui::Emoji::One *UiIntegration::defaultEmojiVariant(
 		return emoji;
 	}
 	const auto nonColored = emoji->nonColoredId();
-	const auto it = cEmojiVariants().constFind(nonColored);
-	const auto result = (it != cEmojiVariants().cend())
-		? emoji->variant(it.value())
+	const auto &variants = Core::App().settings().emojiVariants();
+	const auto i = variants.find(nonColored);
+	const auto result = (i != end(variants))
+		? emoji->variant(i->second)
 		: emoji;
-	AddRecentEmoji(result);
+	Core::App().settings().incrementRecentEmoji(result);
 	return result;
 }
 
@@ -292,6 +317,10 @@ QString UiIntegration::phraseFormattingStrikeOut() {
 
 QString UiIntegration::phraseFormattingMonospace() {
 	return tr::lng_menu_formatting_monospace(tr::now);
+}
+
+bool OpenGLLastCheckFailed() {
+	return QFile::exists(OpenGLCheckFilePath());
 }
 
 } // namespace Core

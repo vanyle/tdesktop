@@ -7,9 +7,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "core/core_settings_proxy.h"
 #include "window/themes/window_themes_embedded.h"
 #include "ui/chat/attach/attach_send_files_way.h"
 #include "platform/platform_notifications_manager.h"
+#include "emoji.h"
 
 enum class RectPart;
 
@@ -47,10 +49,28 @@ public:
 		BottomRight = 2,
 		BottomLeft = 3,
 	};
+	enum class NotifyView {
+		ShowPreview = 0,
+		ShowName = 1,
+		ShowNothing = 2,
+	};
+	enum class WorkMode {
+		WindowAndTray = 0,
+		TrayOnly = 1,
+		WindowOnly = 2,
+	};
 
 	static constexpr auto kDefaultVolume = 0.9;
 
 	Settings();
+
+	[[nodiscard]] rpl::producer<> saveDelayedRequests() const {
+		return _saveDelayed.events();
+	}
+
+	[[nodiscard]] SettingsProxy &proxy() {
+		return _proxy;
+	}
 
 	[[nodiscard]] static bool IsLeftCorner(ScreenCorner corner) {
 		return (corner == ScreenCorner::TopLeft)
@@ -64,9 +84,11 @@ public:
 	[[nodiscard]] QByteArray serialize() const;
 	void addFromSerialized(const QByteArray &serialized);
 
-	[[nodiscard]] bool chatWide() const;
 	[[nodiscard]] bool adaptiveForWide() const {
-		return _adaptiveForWide;
+		return _adaptiveForWide.current();
+	}
+	[[nodiscard]] rpl::producer<bool> adaptiveForWideValue() const {
+		return _adaptiveForWide.value();
 	}
 	void setAdaptiveForWide(bool value) {
 		_adaptiveForWide = value;
@@ -140,10 +162,10 @@ public:
 	void setFlashBounceNotify(bool value) {
 		_flashBounceNotify = value;
 	}
-	[[nodiscard]] DBINotifyView notifyView() const {
+	[[nodiscard]] NotifyView notifyView() const {
 		return _notifyView;
 	}
-	void setNotifyView(DBINotifyView value) {
+	void setNotifyView(NotifyView value) {
 		_notifyView = value;
 	}
 	[[nodiscard]] bool nativeNotifications() const {
@@ -259,6 +281,12 @@ public:
 	}
 	void setGroupCallPushToTalkDelay(crl::time delay) {
 		_groupCallPushToTalkDelay = delay;
+	}
+	[[nodiscard]] bool groupCallNoiseSuppression() const {
+		return _groupCallNoiseSuppression;
+	}
+	void setGroupCallNoiseSuppression(bool value) {
+		_groupCallNoiseSuppression = value;
 	}
 	[[nodiscard]] Window::Theme::AccentColors &themesAccentColors() {
 		return _themesAccentColors;
@@ -508,9 +536,46 @@ public:
 	void setWindowPosition(const WindowPosition &position) {
 		_windowPosition = position;
 	}
+	void setWorkMode(WorkMode value) {
+		_workMode = value;
+	}
+	[[nodiscard]] WorkMode workMode() const {
+		return _workMode.current();
+	}
+	[[nodiscard]] rpl::producer<WorkMode> workModeValue() const {
+		return _workMode.value();
+	}
+	[[nodiscard]] rpl::producer<WorkMode> workModeChanges() const {
+		return _workMode.changes();
+	}
+
+	struct RecentEmoji {
+		EmojiPtr emoji = nullptr;
+		ushort rating = 0;
+	};
+	[[nodiscard]] const std::vector<RecentEmoji> &recentEmoji() const;
+	[[nodiscard]] EmojiPack recentEmojiSection() const;
+	void incrementRecentEmoji(EmojiPtr emoji);
+	void setLegacyRecentEmojiPreload(QVector<QPair<QString, ushort>> data);
+	[[nodiscard]] rpl::producer<> recentEmojiUpdated() const {
+		return _recentEmojiUpdated.events();
+	}
+
+	[[nodiscard]] const base::flat_map<QString, uint8> &emojiVariants() const {
+		return _emojiVariants;
+	}
+	void saveEmojiVariant(EmojiPtr emoji);
+	void setLegacyEmojiVariants(QMap<QString, int> data);
+
+	[[nodiscard]] bool disableOpenGL() const {
+		return _disableOpenGL;
+	}
+	void setDisableOpenGL(bool value) {
+		_disableOpenGL = value;
+	}
 
 	[[nodiscard]] static bool ThirdColumnByDefault();
-	[[nodiscard]] float64 DefaultDialogsWidthRatio();
+	[[nodiscard]] static float64 DefaultDialogsWidthRatio();
 	[[nodiscard]] static qint32 SerializePlaybackSpeed(float64 speed) {
 		return int(std::round(std::clamp(speed, 0.5, 2.0) * 100));
 	}
@@ -526,11 +591,20 @@ public:
 	void resetOnLastLogout();
 
 private:
+	void resolveRecentEmoji() const;
+
 	static constexpr auto kDefaultThirdColumnWidth = 0;
 	static constexpr auto kDefaultDialogsWidthRatio = 5. / 14;
 	static constexpr auto kDefaultBigDialogsWidthRatio = 0.275;
 
-	bool _adaptiveForWide = true;
+	struct RecentEmojiId {
+		QString emoji;
+		ushort rating = 0;
+	};
+
+	SettingsProxy _proxy;
+
+	rpl::variable<bool> _adaptiveForWide = true;
 	bool _moderateModeEnabled = false;
 	rpl::variable<float64> _songVolume = kDefaultVolume;
 	rpl::variable<float64> _videoVolume = kDefaultVolume;
@@ -541,7 +615,7 @@ private:
 	bool _soundNotify = true;
 	bool _desktopNotify = true;
 	bool _flashBounceNotify = true;
-	DBINotifyView _notifyView = dbinvShowPreview;
+	NotifyView _notifyView = NotifyView::ShowPreview;
 	std::optional<bool> _nativeNotifications;
 	int _notificationsCount = 3;
 	ScreenCorner _notificationsCorner = ScreenCorner::BottomRight;
@@ -557,6 +631,7 @@ private:
 	bool _callAudioDuckingEnabled = true;
 	bool _disableCalls = false;
 	bool _groupCallPushToTalk = false;
+	bool _groupCallNoiseSuppression = true;
 	QByteArray _groupCallPushToTalkShortcut;
 	crl::time _groupCallPushToTalkDelay = 20;
 	Window::Theme::AccentColors _themesAccentColors;
@@ -577,6 +652,10 @@ private:
 	rpl::variable<std::vector<int>> _dictionariesEnabled;
 	rpl::variable<bool> _autoDownloadDictionaries = true;
 	rpl::variable<bool> _mainMenuAccountsShown = true;
+	mutable std::vector<RecentEmojiId> _recentEmojiPreload;
+	mutable std::vector<RecentEmoji> _recentEmoji;
+	base::flat_map<QString, uint8> _emojiVariants;
+	rpl::event_stream<> _recentEmojiUpdated;
 	bool _tabbedSelectorSectionEnabled = false; // per-window
 	Window::Column _floatPlayerColumn = Window::Column(); // per-window
 	RectPart _floatPlayerCorner = RectPart(); // per-window
@@ -590,10 +669,13 @@ private:
 	rpl::variable<std::optional<bool>> _systemDarkMode = std::nullopt;
 	rpl::variable<bool> _systemDarkModeEnabled = false;
 	WindowPosition _windowPosition; // per-window
+	bool _disableOpenGL = false;
+	rpl::variable<WorkMode> _workMode = WorkMode::WindowAndTray;
 
 	bool _tabbedReplacedWithInfo = false; // per-window
 	rpl::event_stream<bool> _tabbedReplacedWithInfoValue; // per-window
 
+	rpl::event_stream<> _saveDelayed;
 	float64 _rememberedSongVolume = kDefaultVolume;
 	bool _rememberedSoundNotifyFromTray = false;
 	bool _rememberedFlashBounceNotifyFromTray = false;

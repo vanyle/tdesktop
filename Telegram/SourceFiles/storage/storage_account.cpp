@@ -577,6 +577,8 @@ void Account::reset() {
 		QDir(LegacyTempDirectory()).removeRecursively();
 		QDir(temp).removeRecursively();
 	});
+
+	Local::sync();
 }
 
 void Account::writeLocations() {
@@ -734,13 +736,6 @@ void Account::writeSessionSettings(Main::SessionSettings *stored) {
 		writeMapQueued();
 	}
 
-	auto recentEmojiPreloadData = cRecentEmojiPreload();
-	if (recentEmojiPreloadData.isEmpty()) {
-		recentEmojiPreloadData.reserve(GetRecentEmoji().size());
-		for (auto &item : GetRecentEmoji()) {
-			recentEmojiPreloadData.push_back(qMakePair(item.first->id(), item.second));
-		}
-	}
 	auto userDataInstance = stored
 		? stored
 		: _owner->getSessionSettings();
@@ -759,13 +754,6 @@ void Account::writeSessionSettings(Main::SessionSettings *stored) {
 
 	uint32 size = 24 * (sizeof(quint32) + sizeof(qint32));
 	size += sizeof(quint32);
-
-	size += sizeof(quint32) + sizeof(qint32);
-	for (auto &item : recentEmojiPreloadData) {
-		size += Serialize::stringSize(item.first) + sizeof(item.second);
-	}
-
-	size += sizeof(quint32) + sizeof(qint32) + cEmojiVariants().size() * (sizeof(uint32) + sizeof(uint64));
 	size += sizeof(quint32) + sizeof(qint32) + recentStickers.size() * (sizeof(uint64) + sizeof(ushort));
 	size += sizeof(quint32) + 3 * sizeof(qint32);
 	size += sizeof(quint32) + 2 * sizeof(qint32);
@@ -780,8 +768,6 @@ void Account::writeSessionSettings(Main::SessionSettings *stored) {
 	if (!userData.isEmpty()) {
 		data.stream << quint32(dbiSessionSettings) << userData;
 	}
-	data.stream << quint32(dbiRecentEmoji) << recentEmojiPreloadData;
-	data.stream << quint32(dbiEmojiVariants) << cEmojiVariants();
 	data.stream << quint32(dbiRecentStickers) << recentStickers;
 
 	FileWriteDescriptor file(_settingsKey, _basePath);
@@ -1671,8 +1657,6 @@ void Account::readStickerSets(
 		return failed();
 	}
 	for (auto i = 0; i != count; ++i) {
-		using LocationType = StorageFileLocation::Type;
-
 		quint64 setId = 0, setAccess = 0;
 		QString setTitle, setShortName;
 		qint32 scnt = 0;
@@ -1697,10 +1681,8 @@ void Account::readStickerSets(
 		if (!thumbnail || !CheckStreamStatus(stickers.stream)) {
 			return failed();
 		} else if (thumbnail->valid() && thumbnail->isLegacy()) {
-			setThumbnail = thumbnail->convertToModern(
-				LocationType::StickerSetThumb,
-				setId,
-				setAccess);
+			// No thumb_version information in legacy location.
+			return failed();
 		} else {
 			setThumbnail = *thumbnail;
 		}
