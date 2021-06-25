@@ -11,9 +11,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/timer.h"
 #include "base/object_ptr.h"
 #include "calls/group/calls_group_call.h"
+#include "calls/group/calls_group_common.h"
 #include "calls/group/calls_choose_join_as.h"
 #include "calls/group/ui/desktop_capture_choose_source.h"
 #include "ui/effects/animations.h"
+#include "ui/gl/gl_window.h"
 #include "ui/rp_widget.h"
 
 class Image;
@@ -37,14 +39,10 @@ template <typename Widget>
 class FadeWrap;
 template <typename Widget>
 class PaddingWrap;
-class Window;
 class ScrollArea;
 class GenericBox;
 class LayerManager;
 class GroupCallScheduledLeft;
-namespace GL {
-enum class Backend;
-} // namespace GL
 namespace Toast {
 class Instance;
 } // namespace Toast
@@ -64,6 +62,7 @@ class Toasts;
 class Members;
 class Viewport;
 enum class PanelMode;
+enum class StickedTooltip;
 
 class Panel final : private Ui::DesktopCapture::ChooseSourceDelegate {
 public:
@@ -80,6 +79,8 @@ public:
 	void showAndActivate();
 	void closeBeforeDestroy();
 
+	rpl::lifetime &lifetime();
+
 private:
 	using State = GroupCall::State;
 	struct ControlsBackgroundNarrow;
@@ -88,21 +89,14 @@ private:
 		Normal,
 		Sticked,
 	};
-	enum class StickedTooltip {
-		Camera = 0x01,
-		Microphone = 0x02,
-	};
-	friend constexpr inline bool is_flag_type(StickedTooltip) {
-		return true;
-	};
-	using StickedTooltips = base::flags<StickedTooltip>;
 	enum class StickedTooltipHide {
 		Unavailable,
 		Activated,
 		Discarded,
 	};
+	class MicLevelTester;
 
-	std::unique_ptr<Ui::Window> createWindow();
+	[[nodiscard]] not_null<Ui::Window*> window() const;
 	[[nodiscard]] not_null<Ui::RpWidget*> widget() const;
 
 	[[nodiscard]] PanelMode mode() const;
@@ -182,8 +176,7 @@ private:
 	const not_null<GroupCall*> _call;
 	not_null<PeerData*> _peer;
 
-	Ui::GL::Backend _backend = Ui::GL::Backend();
-	const std::unique_ptr<Ui::Window> _window;
+	Ui::GL::Window _window;
 	const std::unique_ptr<Ui::LayerManager> _layerBg;
 	rpl::variable<PanelMode> _mode;
 
@@ -235,6 +228,8 @@ private:
 
 	const std::unique_ptr<Toasts> _toasts;
 	base::weak_ptr<Ui::Toast::Instance> _lastToast;
+
+	std::unique_ptr<MicLevelTester> _micLevelTester;
 
 	rpl::lifetime _peerLifetime;
 

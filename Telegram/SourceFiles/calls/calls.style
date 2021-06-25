@@ -520,6 +520,10 @@ groupCallPopupMenuWithVolume: PopupMenu(groupCallPopupMenu) {
 		widthMin: 210px;
 	}
 }
+groupCallPopupVolumeMenu: Menu(groupCallMenu) {
+	widthMin: 210px;
+	itemBgOver: groupCallMenuBg;
+}
 
 groupCallRecordingTimerPadding: margins(0px, 4px, 0px, 4px);
 groupCallRecordingTimerFont: font(12px);
@@ -1082,11 +1086,11 @@ groupCallMenuVolumePadding: margins(17px, 6px, 17px, 5px);
 groupCallMenuVolumeMargin: margins(55px, 0px, 15px, 0px);
 groupCallMenuVolumeSlider: MediaSlider(defaultContinuousSlider) {
 	activeFg: groupCallMembersFg;
-	inactiveFg: groupCallMemberInactiveIcon;
+	inactiveFg: groupCallMembersBgOver;
 	activeFgOver: groupCallMembersFg;
-	inactiveFgOver: groupCallMemberInactiveIcon;
-	activeFgDisabled: groupCallMemberInactiveIcon;
-	receivedTillFg: groupCallMemberInactiveIcon;
+	inactiveFgOver: groupCallMembersBgOver;
+	activeFgDisabled: groupCallMembersBgOver;
+	receivedTillFg: groupCallMembersBgOver;
 	width: 7px;
 	seekSize: size(7px, 7px);
 }
@@ -1251,7 +1255,7 @@ groupCallTooltip: Tooltip(defaultTooltip) {
 }
 groupCallNiceTooltip: ImportantTooltip(defaultImportantTooltip) {
 	bg: importantTooltipBg;
-	padding: margins(10px, 1px, 10px, 3px);
+	padding: margins(10px, 3px, 10px, 5px);
 	radius: 4px;
 	arrow: 4px;
 }

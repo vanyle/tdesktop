@@ -29,6 +29,7 @@ Structure of the folders when building:
 - `TBuild/ThirdParty/ <The third party programs that are needed>`
 
 You'll need to move the `bat` files one folder up for them to work.
+<<<<<<< HEAD
 Run `build.bat` then `build2.bat`
 You'll just need to change the location of msys2 in `build.bat` to `%cd%/ThirdParty/msys64` at line 105 and 114.
 
@@ -46,3 +47,4 @@ Structure of the folders when building:
 You'll need to move the `bat` files one folder up for them to work.
 Run `build.bat` then `build2.bat`
 You'll just need to change the location of msys2 in `build.bat` to `%cd%/ThirdParty/msys64` at line 105 and 114.
+

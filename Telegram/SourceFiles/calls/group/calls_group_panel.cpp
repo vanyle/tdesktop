@@ -20,13 +20,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/platform/ui_platform_utility.h"
 #include "ui/controls/call_mute_button.h"
 #include "ui/widgets/buttons.h"
-#include "ui/widgets/window.h"
 #include "ui/widgets/call_button.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/dropdown_menu.h"
 #include "ui/widgets/input_fields.h"
 #include "ui/widgets/tooltip.h"
-#include "ui/gl/gl_detection.h"
+#include "ui/widgets/window.h"
 #include "ui/chat/group_call_bar.h"
 #include "ui/layers/layer_manager.h"
 #include "ui/layers/generic_box.h"
@@ -47,13 +46,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "base/event_filter.h"
 #include "base/unixtime.h"
-#include "base/platform/base_platform_info.h"
 #include "base/qt_signal_producer.h"
 #include "base/timer_rpl.h"
 #include "app.h"
 #include "apiwrap.h" // api().kickParticipant.
 #include "webrtc/webrtc_video_track.h"
 #include "webrtc/webrtc_media_devices.h" // UniqueDesktopCaptureSource.
+#include "webrtc/webrtc_audio_input_tester.h"
 #include "styles/style_calls.h"
 #include "styles/style_layers.h"
 
@@ -71,6 +70,10 @@ constexpr auto kRecordingOpacity = 0.6;
 constexpr auto kStartNoConfirmation = TimeId(10);
 constexpr auto kControlsBackgroundOpacity = 0.8;
 constexpr auto kOverrideActiveColorBgAlpha = 172;
+constexpr auto kMicrophoneTooltipAfterLoudCount = 3;
+constexpr auto kDropLoudAfterQuietCount = 5;
+constexpr auto kMicrophoneTooltipLevelThreshold = 0.2;
+constexpr auto kMicrophoneTooltipCheckInterval = crl::time(500);
 
 } // namespace
 
@@ -84,17 +87,60 @@ struct Panel::ControlsBackgroundNarrow {
 	Ui::RpWidget blocker;
 };
 
+class Panel::MicLevelTester final {
+public:
+	explicit MicLevelTester(Fn<void()> show);
+
+	[[nodiscard]] bool showTooltip() const;
+
+private:
+	void check();
+
+	Fn<void()> _show;
+	base::Timer _timer;
+	Webrtc::AudioInputTester _tester;
+	int _loudCount = 0;
+	int _quietCount = 0;
+
+};
+
+Panel::MicLevelTester::MicLevelTester(Fn<void()> show)
+: _show(std::move(show))
+, _timer([=] { check(); })
+, _tester(
+		Core::App().settings().callAudioBackend(),
+		Core::App().settings().callInputDeviceId()) {
+	_timer.callEach(kMicrophoneTooltipCheckInterval);
+}
+
+bool Panel::MicLevelTester::showTooltip() const {
+	return (_loudCount >= kMicrophoneTooltipAfterLoudCount);
+}
+
+void Panel::MicLevelTester::check() {
+	const auto level = _tester.getAndResetLevel();
+	if (level >= kMicrophoneTooltipLevelThreshold) {
+		_quietCount = 0;
+		if (++_loudCount >= kMicrophoneTooltipAfterLoudCount) {
+			_show();
+		}
+	} else if (_loudCount > 0 && ++_quietCount >= kDropLoudAfterQuietCount) {
+		_quietCount = 0;
+		_loudCount = 0;
+	}
+}
+
 Panel::Panel(not_null<GroupCall*> call)
 : _call(call)
 , _peer(call->peer())
-, _window(createWindow())
-, _layerBg(std::make_unique<Ui::LayerManager>(_window->body()))
+, _layerBg(std::make_unique<Ui::LayerManager>(widget()))
 #ifndef Q_OS_MAC
 , _controls(std::make_unique<Ui::Platform::TitleControls>(
-	_window->body(),
+	widget(),
 	st::groupCallTitle))
 #endif // !Q_OS_MAC
-, _viewport(std::make_unique<Viewport>(widget(), PanelMode::Wide, _backend))
+, _viewport(
+	std::make_unique<Viewport>(widget(), PanelMode::Wide, _window.backend()))
 , _mute(std::make_unique<Ui::CallMuteButton>(
 	widget(),
 	st::callMuteButton,
@@ -112,6 +158,8 @@ Panel::Panel(not_null<GroupCall*> call)
 			: Ui::CallMuteButtonType::ScheduledSilent),
 	}))
 , _hangup(widget(), st::groupCallHangup)
+, _stickedTooltipsShown(Core::App().settings().hiddenGroupCallTooltips()
+	& ~StickedTooltip::Microphone) // Always show tooltip about mic.
 , _toasts(std::make_unique<Toasts>(this)) {
 	_layerBg->setStyleOverrides(&st::groupCallBox, &st::groupCallLayerBox);
 	_layerBg->setHideByBackgroundClick(true);
@@ -123,7 +171,7 @@ Panel::Panel(not_null<GroupCall*> call)
 
 	SubscribeToMigration(
 		_peer,
-		_window->lifetime(),
+		lifetime(),
 		[=](not_null<ChannelData*> channel) { migrate(channel); });
 	setupRealCallViewers();
 
@@ -139,30 +187,11 @@ Panel::~Panel() {
 	_viewport = nullptr;
 }
 
-std::unique_ptr<Ui::Window> Panel::createWindow() {
-	auto result = std::make_unique<Ui::Window>();
-	const auto capabilities = Ui::GL::CheckCapabilities(result.get());
-	const auto use = Platform::IsMac()
-		? true
-		: Platform::IsWindows()
-		? capabilities.supported
-		: capabilities.transparency;
-	LOG(("OpenGL: %1 (Calls::Group::Viewport)").arg(Logs::b(use)));
-	_backend = use ? Ui::GL::Backend::OpenGL : Ui::GL::Backend::Raster;
-
-	if (use) {
-		return result;
-	}
-
-	// We have to create a new window, if OpenGL initialization failed.
-	return std::make_unique<Ui::Window>();
-}
-
 void Panel::setupRealCallViewers() {
 	_call->real(
 	) | rpl::start_with_next([=](not_null<Data::GroupCall*> real) {
 		subscribeToChanges(real);
-	}, _window->lifetime());
+	}, lifetime());
 }
 
 not_null<GroupCall*> Panel::call() const {
@@ -170,9 +199,9 @@ not_null<GroupCall*> Panel::call() const {
 }
 
 bool Panel::isActive() const {
-	return _window->isActiveWindow()
-		&& _window->isVisible()
-		&& !(_window->windowState() & Qt::WindowMinimized);
+	return window()->isActiveWindow()
+		&& window()->isVisible()
+		&& !(window()->windowState() & Qt::WindowMinimized);
 }
 
 void Panel::showToast(TextWithEntities &&text, crl::time duration) {
@@ -187,24 +216,24 @@ void Panel::showToast(TextWithEntities &&text, crl::time duration) {
 }
 
 void Panel::minimize() {
-	_window->setWindowState(_window->windowState() | Qt::WindowMinimized);
+	window()->setWindowState(window()->windowState() | Qt::WindowMinimized);
 }
 
 void Panel::close() {
-	_window->close();
+	window()->close();
 }
 
 void Panel::showAndActivate() {
-	if (_window->isHidden()) {
-		_window->show();
+	if (window()->isHidden()) {
+		window()->show();
 	}
-	const auto state = _window->windowState();
+	const auto state = window()->windowState();
 	if (state & Qt::WindowMinimized) {
-		_window->setWindowState(state & ~Qt::WindowMinimized);
+		window()->setWindowState(state & ~Qt::WindowMinimized);
 	}
-	_window->raise();
-	_window->activateWindow();
-	_window->setFocus();
+	window()->raise();
+	window()->activateWindow();
+	window()->setFocus();
 }
 
 void Panel::migrate(not_null<ChannelData*> channel) {
@@ -219,12 +248,12 @@ void Panel::subscribeToPeerChanges() {
 	Info::Profile::NameValue(
 		_peer
 	) | rpl::start_with_next([=](const TextWithEntities &name) {
-		_window->setTitle(name.text);
+		window()->setTitle(name.text);
 	}, _peerLifetime);
 }
 
 QWidget *Panel::chooseSourceParent() {
-	return _window.get();
+	return window().get();
 }
 
 QString Panel::chooseSourceActiveDeviceId() {
@@ -232,7 +261,7 @@ QString Panel::chooseSourceActiveDeviceId() {
 }
 
 rpl::lifetime &Panel::chooseSourceInstanceLifetime() {
-	return _window->lifetime();
+	return lifetime();
 }
 
 void Panel::chooseSourceAccepted(const QString &deviceId) {
@@ -244,15 +273,15 @@ void Panel::chooseSourceStop() {
 }
 
 void Panel::initWindow() {
-	_window->setAttribute(Qt::WA_OpaquePaintEvent);
-	_window->setAttribute(Qt::WA_NoSystemBackground);
-	_window->setWindowIcon(
+	window()->setAttribute(Qt::WA_OpaquePaintEvent);
+	window()->setAttribute(Qt::WA_NoSystemBackground);
+	window()->setWindowIcon(
 		QIcon(QPixmap::fromImage(Image::Empty()->original(), Qt::ColorOnly)));
-	_window->setTitleStyle(st::groupCallTitle);
+	window()->setTitleStyle(st::groupCallTitle);
 
 	subscribeToPeerChanges();
 
-	base::install_event_filter(_window.get(), [=](not_null<QEvent*> e) {
+	base::install_event_filter(window().get(), [=](not_null<QEvent*> e) {
 		if (e->type() == QEvent::Close && handleClose()) {
 			e->ignore();
 			return base::EventFilterResult::Cancel;
@@ -267,7 +296,7 @@ void Panel::initWindow() {
 		return base::EventFilterResult::Continue;
 	});
 
-	_window->setBodyTitleArea([=](QPoint widgetPoint) {
+	window()->setBodyTitleArea([=](QPoint widgetPoint) {
 		using Flag = Ui::WindowTitleHitTestFlag;
 		const auto titleRect = QRect(
 			0,
@@ -286,7 +315,7 @@ void Panel::initWindow() {
 	_call->hasVideoWithFramesValue(
 	) | rpl::start_with_next([=] {
 		updateMode();
-	}, _window->lifetime());
+	}, lifetime());
 }
 
 void Panel::initWidget() {
@@ -295,7 +324,7 @@ void Panel::initWidget() {
 	widget()->paintRequest(
 	) | rpl::start_with_next([=](QRect clip) {
 		paint(clip);
-	}, widget()->lifetime());
+	}, lifetime());
 
 	widget()->sizeValue(
 	) | rpl::skip(1) | rpl::start_with_next([=](QSize size) {
@@ -306,7 +335,7 @@ void Panel::initWidget() {
 		// title geometry depends on _controls->geometry,
 		// which is not updated here yet.
 		crl::on_main(widget(), [=] { refreshTitle(); });
-	}, widget()->lifetime());
+	}, lifetime());
 }
 
 void Panel::endCall() {
@@ -380,7 +409,7 @@ void Panel::initControls() {
 		_call->canManageValue()
 	) | rpl::start_with_next([=] {
 		refreshTopButton();
-	}, widget()->lifetime());
+	}, lifetime());
 
 	_hangup->setClickedCallback([=] { endCall(); });
 
@@ -418,7 +447,9 @@ void Panel::initControls() {
 	}
 
 	_call->stateValue(
-	) | rpl::filter([](State state) {
+	) | rpl::before_next([=] {
+		showStickedTooltip();
+	}) | rpl::filter([](State state) {
 		return (state == State::HangingUp)
 			|| (state == State::Ended)
 			|| (state == State::FailedHangingUp)
@@ -515,11 +546,6 @@ void Panel::refreshVideoButtons(std::optional<bool> overrideWideMode) {
 			}
 			_video->setProgress(sharing ? 1. : 0.);
 		}, _video->lifetime());
-		_call->mutedValue(
-		) | rpl::start_with_next([=] {
-			updateButtonsGeometry();
-			showStickedTooltip();
-		}, _video->lifetime());
 	}
 	if (!_screenShare) {
 		_screenShare.create(widget(), st::groupCallScreenShareSmall);
@@ -562,7 +588,8 @@ void Panel::hideStickedTooltip(
 	if (hide != StickedTooltipHide::Unavailable) {
 		_stickedTooltipsShown |= type;
 		if (hide == StickedTooltipHide::Discarded) {
-			// #TODO calls save to settings.
+			Core::App().settings().setHiddenGroupCallTooltip(type);
+			Core::App().saveSettingsDelayed();
 		}
 	}
 	const auto control = (type == StickedTooltip::Camera)
@@ -600,7 +627,7 @@ void Panel::initShareAction() {
 			callback();
 		}
 	};
-	widget()->lifetime().add(std::move(shareLinkLifetime));
+	lifetime().add(std::move(shareLinkLifetime));
 }
 
 void Panel::setupRealMuteButtonState(not_null<Data::GroupCall*> real) {
@@ -676,7 +703,7 @@ void Panel::setupScheduledLabels(rpl::producer<TimeId> date) {
 	) | rpl::map([=](TimeId date) {
 		_countdownData = std::make_shared<Ui::GroupCallScheduledLeft>(date);
 		return rpl::empty_value();
-	}) | rpl::start_spawning(widget()->lifetime());
+	}) | rpl::start_spawning(lifetime());
 
 	_countdown = Ui::CreateGradientLabel(widget(), rpl::duplicate(
 		countdownCreated
@@ -744,7 +771,7 @@ void Panel::setupMembers() {
 	_countdown.destroy();
 	_startsWhen.destroy();
 
-	_members.create(widget(), _call, mode(), _backend);
+	_members.create(widget(), _call, mode(), _window.backend());
 
 	setupVideo(_viewport.get());
 	setupVideo(_members->viewport());
@@ -801,40 +828,40 @@ void Panel::setupMembers() {
 }
 
 void Panel::enlargeVideo() {
-	_lastSmallGeometry = _window->geometry();
+	_lastSmallGeometry = window()->geometry();
 
-	const auto available = _window->screen()->availableGeometry();
+	const auto available = window()->screen()->availableGeometry();
 	const auto width = std::max(
-		_window->width(),
+		window()->width(),
 		std::max(
 			std::min(available.width(), st::groupCallWideModeSize.width()),
 			st::groupCallWideModeWidthMin));
 	const auto height = std::max(
-		_window->height(),
+		window()->height(),
 		std::min(available.height(), st::groupCallWideModeSize.height()));
-	auto geometry = QRect(_window->pos(), QSize(width, height));
+	auto geometry = QRect(window()->pos(), QSize(width, height));
 	if (geometry.x() < available.x()) {
-		geometry.setX(std::min(available.x(), _window->x()));
+		geometry.moveLeft(std::min(available.x(), window()->x()));
 	}
 	if (geometry.x() + geometry.width()
 		> available.x() + available.width()) {
-		geometry.setX(std::max(
+		geometry.moveLeft(std::max(
 			available.x() + available.width(),
-			_window->x() + _window->width()) - geometry.width());
+			window()->x() + window()->width()) - geometry.width());
 	}
 	if (geometry.y() < available.y()) {
-		geometry.setY(std::min(available.y(), _window->y()));
+		geometry.moveTop(std::min(available.y(), window()->y()));
 	}
 	if (geometry.y() + geometry.height() > available.y() + available.height()) {
-		geometry.setY(std::max(
+		geometry.moveTop(std::max(
 			available.y() + available.height(),
-			_window->y() + _window->height()) - geometry.height());
+			window()->y() + window()->height()) - geometry.height());
 	}
 	if (_lastLargeMaximized) {
-		_window->setWindowState(
-			_window->windowState() | Qt::WindowMaximized);
+		window()->setWindowState(
+			window()->windowState() | Qt::WindowMaximized);
 	} else {
-		_window->setGeometry((_lastLargeGeometry
+		window()->setGeometry((_lastLargeGeometry
 			&& available.intersects(*_lastLargeGeometry))
 			? *_lastLargeGeometry
 			: geometry);
@@ -842,23 +869,23 @@ void Panel::enlargeVideo() {
 }
 
 void Panel::minimizeVideo() {
-	if (_window->windowState() & Qt::WindowMaximized) {
+	if (window()->windowState() & Qt::WindowMaximized) {
 		_lastLargeMaximized = true;
-		_window->setWindowState(
-			_window->windowState() & ~Qt::WindowMaximized);
+		window()->setWindowState(
+			window()->windowState() & ~Qt::WindowMaximized);
 	} else {
 		_lastLargeMaximized = false;
-		_lastLargeGeometry = _window->geometry();
+		_lastLargeGeometry = window()->geometry();
 	}
-	const auto available = _window->screen()->availableGeometry();
+	const auto available = window()->screen()->availableGeometry();
 	const auto width = st::groupCallWidth;
 	const auto height = st::groupCallHeight;
 	auto geometry = QRect(
-		_window->x() + (_window->width() - width) / 2,
-		_window->y() + (_window->height() - height) / 2,
+		window()->x() + (window()->width() - width) / 2,
+		window()->y() + (window()->height() - height) / 2,
 		width,
 		height);
-	_window->setGeometry((_lastSmallGeometry
+	window()->setGeometry((_lastSmallGeometry
 		&& available.intersects(*_lastSmallGeometry))
 		? *_lastSmallGeometry
 		: geometry);
@@ -886,6 +913,9 @@ void Panel::raiseControls() {
 		}
 	}
 	_mute->raise();
+	if (_niceTooltip) {
+		_niceTooltip->raise();
+	}
 }
 
 void Panel::setupVideo(not_null<Viewport*> viewport) {
@@ -1034,7 +1064,7 @@ void Panel::subscribeToChanges(not_null<Data::GroupCall*> real) {
 			: tr::lng_group_call_recording_stopped)(
 				tr::now,
 				Ui::Text::RichLangValue));
-	}, widget()->lifetime());
+	}, lifetime());
 	validateRecordingMark(real->recordStartDate() != 0);
 
 	rpl::combine(
@@ -1043,14 +1073,26 @@ void Panel::subscribeToChanges(not_null<Data::GroupCall*> real) {
 	) | rpl::start_with_next([=] {
 		refreshVideoButtons();
 		showStickedTooltip();
-	}, widget()->lifetime());
+	}, lifetime());
 
 	rpl::combine(
 		_call->videoIsWorkingValue(),
 		_call->isSharingScreenValue()
 	) | rpl::start_with_next([=] {
 		refreshTopButton();
-	}, widget()->lifetime());
+	}, lifetime());
+
+	_call->mutedValue(
+	) | rpl::skip(1) | rpl::start_with_next([=](MuteState state) {
+		updateButtonsGeometry();
+		if (state == MuteState::Active
+			|| state == MuteState::PushToTalk) {
+			hideStickedTooltip(
+				StickedTooltip::Microphone,
+				StickedTooltipHide::Activated);
+		}
+		showStickedTooltip();
+	}, lifetime());
 
 	updateControlsGeometry();
 }
@@ -1096,7 +1138,7 @@ void Panel::refreshTopButton() {
 				chooseJoinAs();
 			});
 			updateControlsGeometry();
-		}, widget()->lifetime());
+		}, lifetime());
 	} else {
 		_menuToggle.destroy();
 		_joinAsToggle.destroy();
@@ -1350,7 +1392,7 @@ void Panel::initLayout() {
 	) | rpl::start_with_next([=] {
 		// _menuToggle geometry depends on _controls arrangement.
 		crl::on_main(widget(), [=] { updateControlsGeometry(); });
-	}, widget()->lifetime());
+	}, lifetime());
 
 #endif // !Q_OS_MAC
 }
@@ -1362,16 +1404,20 @@ void Panel::showControls() {
 }
 
 void Panel::closeBeforeDestroy() {
-	_window->close();
+	window()->close();
 	_callLifetime.destroy();
+}
+
+rpl::lifetime &Panel::lifetime() {
+	return window()->lifetime();
 }
 
 void Panel::initGeometry() {
 	const auto center = Core::App().getPointForCallPanelCenter();
 	const auto rect = QRect(0, 0, st::groupCallWidth, st::groupCallHeight);
-	_window->setGeometry(rect.translated(center - rect.center()));
-	_window->setMinimumSize(rect.size());
-	_window->show();
+	window()->setGeometry(rect.translated(center - rect.center()));
+	window()->setMinimumSize(rect.size());
+	window()->show();
 }
 
 QRect Panel::computeTitleRect() const {
@@ -1407,7 +1453,10 @@ bool Panel::updateMode() {
 		_call->showVideoEndpointLarge({});
 	}
 	refreshVideoButtons(wide);
-	_niceTooltip.destroy();
+	if (!_stickedTooltipClose
+		|| _niceTooltipControl.data() != _mute->outer().get()) {
+		_niceTooltip.destroy();
+	}
 	_mode = mode;
 	if (_title) {
 		_title->setTextColorOverride(wide
@@ -1631,7 +1680,10 @@ void Panel::trackControlOver(not_null<Ui::RpWidget*> control, bool over) {
 
 void Panel::showStickedTooltip() {
 	static const auto kHasCamera = !Webrtc::GetVideoInputList().empty();
+	const auto callReady = (_call->state() == State::Joined
+		|| _call->state() == State::Connecting);
 	if (!(_stickedTooltipsShown & StickedTooltip::Camera)
+		&& callReady
 		&& (_mode.current() == PanelMode::Wide)
 		&& _video
 		&& _call->videoIsWorking()
@@ -1645,13 +1697,25 @@ void Panel::showStickedTooltip() {
 		StickedTooltipHide::Unavailable);
 
 	if (!(_stickedTooltipsShown & StickedTooltip::Microphone)
-		&& (_mode.current() == PanelMode::Wide)
+		&& callReady
 		&& _mute
-		&& !_call->mutedByAdmin()
-		&& false) { // Check if there is incoming sound.
-		showNiceTooltip(_mute->outer(), NiceTooltipType::Sticked);
+		&& !_call->mutedByAdmin()) {
+		if (_stickedTooltipClose) {
+			// Showing already.
+			return;
+		} else if (!_micLevelTester) {
+			// Check if there is incoming sound.
+			_micLevelTester = std::make_unique<MicLevelTester>([=] {
+				showStickedTooltip();
+			});
+		}
+		if (_micLevelTester->showTooltip()) {
+			_micLevelTester = nullptr;
+			showNiceTooltip(_mute->outer(), NiceTooltipType::Sticked);
+		}
 		return;
 	}
+	_micLevelTester = nullptr;
 	hideStickedTooltip(
 		StickedTooltip::Microphone,
 		StickedTooltipHide::Unavailable);
@@ -1685,11 +1749,12 @@ void Panel::showNiceTooltip(
 		}
 		return rpl::producer<QString>();
 	}();
-	if (!text
-		|| _wideControlsAnimation.animating()
-		|| !_wideControlsShown
-		|| _stickedTooltipClose) {
+	if (!text || _stickedTooltipClose) {
 		return;
+	} else if (_wideControlsAnimation.animating() || !_wideControlsShown) {
+		if (type == NiceTooltipType::Normal) {
+			return;
+		}
 	}
 	const auto inner = [&]() -> Ui::RpWidget* {
 		const auto normal = (type == NiceTooltipType::Normal);
@@ -2146,14 +2211,18 @@ void Panel::paint(QRect clip) {
 
 bool Panel::handleClose() {
 	if (_call) {
-		_window->hide();
+		window()->hide();
 		return true;
 	}
 	return false;
 }
 
+not_null<Ui::Window*> Panel::window() const {
+	return _window.window();
+}
+
 not_null<Ui::RpWidget*> Panel::widget() const {
-	return _window->body();
+	return _window.widget();
 }
 
 } // namespace Calls::Group
